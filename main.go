@@ -31,6 +31,8 @@ func main() {
 
 	DownloadFile(r)
 
+	//todo: 当前位置 https://github.com/gin-gonic/gin   Redirects
+
 	r.Run("localhost:8888")
 
 }
