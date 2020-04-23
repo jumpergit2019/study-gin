@@ -27,6 +27,9 @@ func main() {
 	//ModLogFormat(r)
 	Group(r)
 	InitRouter(r)
+	CustomValid(r)
+
+	DownloadFile(r)
 
 	r.Run("localhost:8888")
 

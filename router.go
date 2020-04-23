@@ -8,6 +8,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/gin-gonic/gin/binding"
+	"github.com/go-playground/validator/v10"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -94,6 +97,7 @@ func InitRouter(r *gin.Engine) {
 	//可以使用 c.Param() 获取单个指定参数
 	//可以使用 c.Params 获取所有参数
 	//可以使用 c.ShouldBindUri 将指定参数映射到特定结构中, 注意使用 tag 'uri'
+	//还有 ShouldBindHeader 将指定头部数据映射到特定结构中, 注意使用 tag 'header'
 
 	r.POST("/user_param/:name/*action", func(c *gin.Context) {
 		name := c.Param("name")
@@ -228,11 +232,14 @@ func InitRouter(r *gin.Engine) {
 	//可以在结构体中编写多个 tag  json xml yaml form, 这样能够适应多种客户端形式
 
 	//标签 binding:"required" 表示该字段为必须， 若是没有该字段，则会绑定返回错误
-	?标签 binding:"-" 表示不用对该字段进行绑定
+	//标签 binding:"-" 表示不用对该字段进行绑定
+
+	//另外 ShouldBind 函数可以根据content type 自行决定使用哪种ShouldBind...来绑定数据
 
 	r.POST("/upload_json", func(c *gin.Context) {
 		type JsonContent struct {
-			Content string `json:"content" binding:"-"`
+			Content string `json:"content" binding:"required"`
+			Pass    string `json:"pass" binding:"-"`
 		}
 		var jc JsonContent
 		err := c.ShouldBindJSON(&jc)
@@ -250,4 +257,73 @@ func InitRouter(r *gin.Engine) {
 		fmt.Println("============", jc)
 		c.String(http.StatusOK, "upload json: %v", jc)
 	})
+}
+
+//使用 bind/shouldbind/mustbind 函数还有一个很重要的作用，即在映射过程中还会进行数据验证，这里使用的是如下三方库，功能很强大
+//参见 https://godoc.org/github.com/go-playground/validator
+//另外可以自行定义对于特定字段的验证
+//todo: 该功能暂时貌似不能使用 来自 https://github.com/gin-gonic/gin  Custom Validators
+//这里感觉其实并没有执行自定义检测函数 bookableDate 中的代码， 日志没有打印，并且随便修改，即便直接返回false 也不会对结果有影响
+//代码逻辑是与当前时间进行比较，若是设定时间在当前时间之前应该不能通过验证，但是执行
+//curl "localhost:8085/bookable?check_in=2018-04-16&check_out=2018-04-17" 居然能够通过验证，明显不正确
+//curl "localhost:8085/bookable?check_in=2018-03-10&check_out=2018-03-09" 不能通过验证，是因为 tag gtfield=CheckIn 导致的
+
+type Booking struct {
+	CheckIn  time.Time `form:"check_in" binding:"required" time_format:"2006-01-02"`
+	CheckOut time.Time `form:"check_out" binding:"required,gtfield=CheckIn" time_format:"2006-01-02"`
+	Name     string    `form:"name" binding:"required"`
+}
+
+var bookableDate validator.Func = func(fl validator.FieldLevel) bool {
+	fmt.Println("bookableDate")
+
+	date, ok := fl.Field().Interface().(time.Time)
+	if ok {
+		today := time.Now()
+		if today.After(date) {
+			return false
+		}
+	}
+	return true
+}
+
+func getBookable(c *gin.Context) {
+	fmt.Println("getBookable")
+
+	var b Booking
+	if err := c.ShouldBindWith(&b, binding.Query); err == nil {
+		c.JSON(http.StatusOK, gin.H{"message": "Booking dates are valid!"})
+	} else {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	}
+}
+
+func CustomValid(r *gin.Engine) {
+	if v, ok := binding.Validator.Engine().(*validator.Validate); ok {
+		fmt.Println("--------------")
+		err := v.RegisterValidation("bookableDate", bookableDate)
+		if err != nil {
+			fmt.Println("============err: ", err)
+		}
+	}
+	r.GET("/bookable", getBookable)
+}
+
+//静态文件到获取
+//StaticFile 用于单个文件
+//StaticFS 用于一个目录下的指定文件
+//注意 StaticFS 的第二个参数所指定的路径 需要与 上传文件接口中存入文件的路径保持一致
+//c.File 将文件中的内容返回， 即 Serving data from file
+//另外还有 Serving data from reader 参见 https://github.com/gin-gonic/gin
+//http://127.0.0.1:8888/images.jpeg
+//http://127.0.0.1:8888/getfile/file1
+//http://127.0.0.1:8888/local/file2
+func DownloadFile(r *gin.Engine) {
+	r.StaticFS("/getfile", http.Dir("tmpfile/"))
+	r.StaticFile("/images.jpeg", "./tmpfile/images.jpeg")
+
+	r.GET("/local/file2", func(c *gin.Context) {
+		c.File("tmpfile/file2")
+	})
+
 }
