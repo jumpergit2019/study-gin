@@ -18,9 +18,10 @@ func PrintHeadBody(c *gin.Context) {
 	fmt.Printf("body: \n%s", body)
 }
 
+//
 func main() {
 
-	//InitLog()
+	InitLog()
 
 	r := gin.New()
 
@@ -30,9 +31,7 @@ func main() {
 	CustomValid(r)
 
 	DownloadFile(r)
-
-	//todo: 当前位置 https://github.com/gin-gonic/gin   Redirects
-
-	r.Run("localhost:8888")
+	RunHttpWithParam(r)
+	//RunGraceful(r)
 
 }

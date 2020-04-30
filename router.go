@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin/binding"
 	"github.com/go-playground/validator/v10"
 
+	"github.com/fvbock/endless"
 	"github.com/gin-gonic/gin"
 )
 
@@ -70,6 +71,9 @@ func Group(r *gin.Engine) {
 	r.Use(gin.Logger())
 	r.Use(gin.Recovery())
 
+	//自定义中间件
+	r.Use(Midware())
+
 	//指定分组中间件
 	api := r.Group("/api")
 	api.Use(apiMiddle)
@@ -82,6 +86,9 @@ func Group(r *gin.Engine) {
 		api.POST("/postapi", setSpecifyMiddle(666), func(c *gin.Context) {
 
 		})
+
+		//在协程中使用Context.Copy()结果
+		api.GET("long_async", CopyContextUseInGroutin)
 
 		//建立分组之下的分组
 		xxx := api.Group("/xxx")
@@ -143,7 +150,6 @@ func InitRouter(r *gin.Engine) {
 		var tmp Tmp
 		c.ShouldBindQuery(&tmp)
 		c.String(http.StatusOK, "%s, %s", tmp.Id, tmp.Page)
-
 	})
 
 	//POST /post?ids[a]=1234&ids[b]=hello HTTP/1.1
@@ -253,9 +259,26 @@ func InitRouter(r *gin.Engine) {
 		//	fmt.Println("err: ", err)
 		//	return
 		//}
-
 		fmt.Println("============", jc)
 		c.String(http.StatusOK, "upload json: %v", jc)
+	})
+
+	//以上所有绑定其实都没有针对post 中 form data 来进行的绑定
+	//要绑定 可以使用 Context.Bind 函数，他会自动根据 Context-Type 来进行对应类型的绑定
+	//其中包含 form data
+	//为此 yangfeng 编写了 github.com/smartwalle/binding 专门进行 post form data 的解析
+	r.POST("/bind_form", func(c *gin.Context) {
+		type StructA struct {
+			FieldA string `form:"field_a"`
+		}
+		var sa StructA
+		err := c.Bind(&sa)
+		if err != nil {
+			c.String(http.StatusInternalServerError, "err: %s", err)
+			return
+		}
+		fmt.Println("============", sa)
+		c.String(http.StatusOK, "sa: %v", sa)
 	})
 }
 
@@ -327,3 +350,74 @@ func DownloadFile(r *gin.Engine) {
 	})
 
 }
+
+//重定向，可以定向到外部地址，也可以定向到内部地址
+//http://127.0.0.1:8888/test
+//http://127.0.0.1:8888/test1
+func Redirect(r *gin.Engine) {
+
+	//重定向到外部地址
+	r.GET("/test", func(c *gin.Context) {
+		c.Redirect(http.StatusMovedPermanently, "http://www.google.com/")
+	})
+
+	//重定向到内部地址
+	r.GET("/test1", func(c *gin.Context) {
+		c.Request.URL.Path = "/test2"
+		r.HandleContext(c)
+	})
+	r.GET("/test2", func(c *gin.Context) {
+		c.String(http.StatusOK, "hello,world")
+	})
+}
+
+////自定义中间件
+//需要在 header 中添加 Authorization
+func Midware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		token := c.GetHeader("Authorization")
+		if token == "" {
+			c.String(http.StatusUnauthorized, "err: invalid token")
+			c.AbortWithStatus(http.StatusUnauthorized)
+			return
+		}
+		//验证token
+		c.Next()
+	}
+}
+
+//在新开协程中使用 gin.Context, 只能使用拷贝 Copy() 的对象，不能使用原对象
+func CopyContextUseInGroutin(c *gin.Context) {
+	cc := c.Copy()
+	go func() {
+		time.Sleep(3 * time.Second)
+		fmt.Println("request: ", cc.Request.URL.Path)
+	}()
+
+	c.String(http.StatusOK, "wait for 3 seconds.")
+}
+
+//使用特定参数运行http服务器
+func RunHttpWithParam(router *gin.Engine) {
+	s := http.Server{
+		Addr:           ":8888",
+		Handler:        router,
+		ReadTimeout:    10 * time.Second,
+		WriteTimeout:   10 * time.Second,
+		MaxHeaderBytes: 1 << 20,
+	}
+	s.ListenAndServe()
+
+}
+
+//优雅停服和重启，这里使用如下三方库
+//github.com/fvbock/endless
+func RunGraceful(router *gin.Engine) {
+
+	endless.DefaultWriteTimeOut = 10 * time.Second
+	endless.DefaultReadTimeOut = 10 * time.Second
+	endless.DefaultMaxHeaderBytes = 1 << 20
+	endless.ListenAndServe(":8888", router)
+}
+
+//todo: 经试验 Run multiple service using Gin 存在问题，启动都服务无法访问
